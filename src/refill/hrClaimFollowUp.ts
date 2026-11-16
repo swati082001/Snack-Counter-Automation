@@ -12,7 +12,15 @@ import {
   rejectedManagementMessage,
 } from './messages';
 import { PurchaseRepository } from './purchaseRepository';
-import { HR, Notification, SYSTEM, moveTo, saveRefill, sendNotifications, skipIfChangedMeanwhile } from './refillChanges';
+import {
+  HR,
+  Notification,
+  SYSTEM,
+  moveTo,
+  saveRefill,
+  sendNotifications,
+  skipIfChangedMeanwhile,
+} from './refillChanges';
 import { RefillRepository } from './refillRepository';
 
 export interface HrClaimFollowUpDeps {

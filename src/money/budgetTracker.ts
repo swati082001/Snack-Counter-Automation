@@ -21,6 +21,10 @@ export interface PurchaseFlags {
   unusualAmount: boolean;
 }
 
+export function isInOfficeMonth(purchase: Purchase, month: string, config: AppConfig): boolean {
+  return monthKey(purchase.purchasedAt, config.offices[purchase.office].timeZone) === month;
+}
+
 // Every purchase counts, whatever its HR status: a rejected claim was still
 // money spent on snacks.
 function purchasesInMonth(
@@ -29,10 +33,7 @@ function purchasesInMonth(
   purchases: readonly Purchase[],
   config: AppConfig,
 ): Purchase[] {
-  const { timeZone } = config.offices[office];
-  return purchases.filter(
-    (purchase) => purchase.office === office && monthKey(purchase.purchasedAt, timeZone) === month,
-  );
+  return purchases.filter((purchase) => purchase.office === office && isInOfficeMonth(purchase, month, config));
 }
 
 export function budgetStatus(

@@ -1,0 +1,9 @@
+node_modules
+dist
+
+# Claude Code skills and local settings
+.claude/
+
+# Markdown files are private notes, except the root README
+*.md
+!/README.md

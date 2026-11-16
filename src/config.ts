@@ -20,7 +20,8 @@ export interface AppConfig {
   offices: Record<Office, OfficeConfig>;
 }
 
-const HOUR_MS = 60 * 60 * 1000;
+export const HOUR_MS = 60 * 60 * 1000;
+export const DAY_MS = 24 * HOUR_MS;
 
 export const DEFAULT_CONFIG: AppConfig = {
   offerWindowMs: 2 * HOUR_MS, // time to accept an offer

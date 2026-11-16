@@ -53,6 +53,11 @@ export interface RefillCoordinatorDeps {
   config: AppConfig;
 }
 
+export interface ReportEmptyResult {
+  refill: Refill;
+  created: boolean; // false when the report joined a refill that was already open
+}
+
 // Runs the refill lifecycle: report, offer, accept or decline, deadlines,
 // hand-over, cancel and purchase. What happens with the HR claim after the
 // purchase lives in HrClaimFollowUp. Every change is saved with the version
@@ -64,10 +69,10 @@ export class RefillCoordinator {
     this.hrFollowUp = new HrClaimFollowUp(deps);
   }
 
-  async reportEmpty(office: Office, reportedBy: string): Promise<Refill> {
+  async reportEmpty(office: Office, reportedBy: string): Promise<ReportEmptyResult> {
     const existing = await this.deps.refills.findActiveByOffice(office);
     if (existing) {
-      return existing;
+      return { refill: existing, created: false };
     }
 
     const now = this.now();
@@ -99,11 +104,11 @@ export class RefillCoordinator {
       if (!winner) {
         throw error;
       }
-      return winner;
+      return { refill: winner, created: false };
     }
 
     await this.send(notifications);
-    return refill;
+    return { refill, created: true };
   }
 
   async acceptOffer(refillId: string, volunteerId: string): Promise<Refill> {

@@ -35,7 +35,7 @@ describe('reportEmpty', () => {
   it('creates an open refill and offers it to the fairest volunteer in that office', async () => {
     const ctx = await buildTestContext();
 
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
 
     expect(refill).toMatchObject({ id: 'refill_1', office: 'OSLO', state: 'OPEN', reportedBy: 'dina', version: 1 });
     expect(refill.currentOffer).toEqual({
@@ -65,7 +65,9 @@ describe('reportEmpty', () => {
     const first = await ctx.coordinator.reportEmpty('OSLO', 'dina');
     const second = await ctx.coordinator.reportEmpty('OSLO', 'bjorn');
 
-    expect(second.id).toBe(first.id);
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(second.refill.id).toBe(first.refill.id);
     expect(await ctx.refills.list()).toHaveLength(1);
     expect(ctx.chat.messagesTo('anna')).toHaveLength(1);
   });
@@ -78,7 +80,8 @@ describe('reportEmpty', () => {
       ctx.coordinator.reportEmpty('OSLO', 'bjorn'),
     ]);
 
-    expect(second.id).toBe(first.id);
+    expect(second.refill.id).toBe(first.refill.id);
+    expect([first.created, second.created].sort()).toEqual([false, true]);
     expect(await ctx.refills.list()).toHaveLength(1);
     expect(ctx.chat.messagesTo('anna')).toHaveLength(1);
   });
@@ -86,8 +89,8 @@ describe('reportEmpty', () => {
   it('keeps the two offices separate', async () => {
     const ctx = await buildTestContext();
 
-    const oslo = await ctx.coordinator.reportEmpty('OSLO', 'dina');
-    const bengaluru = await ctx.coordinator.reportEmpty('BENGALURU', 'ravi');
+    const { refill: oslo } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill: bengaluru } = await ctx.coordinator.reportEmpty('BENGALURU', 'ravi');
 
     expect(bengaluru.id).not.toBe(oslo.id);
     expect(bengaluru.currentOffer?.volunteerId).toBe('ravi');
@@ -98,7 +101,7 @@ describe('reportEmpty', () => {
     const { refill: first } = await reportAcceptAndBuy(ctx, 'OSLO', osloInput());
     expect(first.state).toBe('CLAIM_SUBMITTED');
 
-    const second = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill: second } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
 
     expect(second.id).not.toBe(first.id);
     expect(second.state).toBe('OPEN');
@@ -108,7 +111,7 @@ describe('reportEmpty', () => {
 describe('acceptOffer', () => {
   it('REQUIRED: two people cannot both commit to the same refill', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
 
     const results = await Promise.allSettled([
       ctx.coordinator.acceptOffer(refill.id, 'anna'),
@@ -127,7 +130,7 @@ describe('acceptOffer', () => {
     // Two accepts for the same offer (for example a double tap) both read the
     // refill before either saves. Only the version check stops the second one.
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
 
     const results = await Promise.allSettled([
       ctx.coordinator.acceptOffer(refill.id, 'anna'),
@@ -145,7 +148,7 @@ describe('acceptOffer', () => {
 
   it('claims the refill with a 24 hour deadline and confirms by direct message', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
 
     const claimed = await ctx.coordinator.acceptOffer(refill.id, 'anna');
 
@@ -162,14 +165,14 @@ describe('acceptOffer', () => {
 
   it('only lets the named person accept', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
 
     await expect(ctx.coordinator.acceptOffer(refill.id, 'bjorn')).rejects.toThrow(NotOfferedToYouError);
   });
 
   it('refuses an accept once the refill is already claimed', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
     await ctx.coordinator.acceptOffer(refill.id, 'anna');
 
     await expect(ctx.coordinator.acceptOffer(refill.id, 'anna')).rejects.toThrow(AlreadyClaimedError);
@@ -177,7 +180,7 @@ describe('acceptOffer', () => {
 
   it('refuses an accept after the offer window, and tick offers it to someone else', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
     ctx.clock.advance(2 * HOUR_MS);
 
     await expect(ctx.coordinator.acceptOffer(refill.id, 'anna')).rejects.toThrow(NotOfferedToYouError);
@@ -198,7 +201,7 @@ describe('acceptOffer', () => {
 describe('declineOffer', () => {
   it('offers to the next candidate immediately and excludes the decliner', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
 
     const after = await ctx.coordinator.declineOffer(refill.id, 'anna');
 
@@ -210,7 +213,7 @@ describe('declineOffer', () => {
 
   it('only lets the named person decline', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
 
     await expect(ctx.coordinator.declineOffer(refill.id, 'bjorn')).rejects.toThrow(NotOfferedToYouError);
   });
@@ -219,7 +222,7 @@ describe('declineOffer', () => {
 describe('tick: deadlines and hand-over', () => {
   it('REQUIRED: a refill nobody completes is handed to someone else', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
     await ctx.coordinator.acceptOffer(refill.id, 'anna');
 
     ctx.clock.advance(24 * HOUR_MS + MINUTE_MS);
@@ -238,7 +241,7 @@ describe('tick: deadlines and hand-over', () => {
 
   it('does nothing to a claim before its deadline', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
     const claimed = await ctx.coordinator.acceptOffer(refill.id, 'anna');
 
     ctx.clock.advance(24 * HOUR_MS - MINUTE_MS);
@@ -249,7 +252,7 @@ describe('tick: deadlines and hand-over', () => {
 
   it('moves to the next person when an offer is ignored for 2 hours', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
 
     ctx.clock.advance(2 * HOUR_MS);
     await ctx.coordinator.tick();
@@ -262,7 +265,7 @@ describe('tick: deadlines and hand-over', () => {
 
   it('is safe to call repeatedly: a second tick changes nothing', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
     ctx.clock.advance(2 * HOUR_MS);
 
     await ctx.coordinator.tick();
@@ -282,7 +285,7 @@ describe('when nobody is eligible', () => {
       await setAvailability(ctx, id, 'AWAY');
     }
 
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
     expect(refill.state).toBe('OPEN');
     expect(refill.currentOffer).toBeNull();
 
@@ -301,7 +304,7 @@ describe('when nobody is eligible', () => {
 
   it('asks excluded volunteers again once the refill is more than 24 hours old', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
     await ctx.coordinator.declineOffer(refill.id, 'anna');
     await ctx.coordinator.declineOffer(refill.id, 'bjorn');
     const allDeclined = await ctx.coordinator.declineOffer(refill.id, 'carl');
@@ -327,7 +330,7 @@ describe('when nobody is eligible', () => {
 describe('cancelRefill', () => {
   it('cancels an open refill and tells the person holding the offer', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
 
     const cancelled = await ctx.coordinator.cancelRefill(refill.id, 'carl', 'I refilled it myself');
 
@@ -338,7 +341,7 @@ describe('cancelRefill', () => {
 
   it('cancels a claimed refill and tells the claimer', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
     await ctx.coordinator.acceptOffer(refill.id, 'anna');
 
     const cancelled = await ctx.coordinator.cancelRefill(refill.id, 'carl', 'Box was restocked');
@@ -349,10 +352,10 @@ describe('cancelRefill', () => {
 
   it('lets the office report a new empty box after a cancel', async () => {
     const ctx = await buildTestContext();
-    const first = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill: first } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
     await ctx.coordinator.cancelRefill(first.id, 'carl', 'Refilled');
 
-    const second = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill: second } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
 
     expect(second.id).not.toBe(first.id);
   });
@@ -370,7 +373,7 @@ describe('cancelRefill', () => {
 
   it('requires a reason', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
 
     await expect(ctx.coordinator.cancelRefill(refill.id, 'carl', '   ')).rejects.toThrow(ValidationError);
   });
@@ -403,7 +406,7 @@ describe('submitPurchase', () => {
 
   it('only accepts a purchase from the claimer of a claimed refill', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
 
     await expect(ctx.coordinator.submitPurchase(refill.id, 'anna', osloInput())).rejects.toThrow(InvalidStateError);
 
@@ -413,14 +416,14 @@ describe('submitPurchase', () => {
 
   it('accepts a late receipt while the claim has not been handed on, and refuses it after', async () => {
     const ctx = await buildTestContext();
-    const first = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill: first } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
     await ctx.coordinator.acceptOffer(first.id, 'anna');
     ctx.clock.advance(25 * HOUR_MS);
 
     const { refill } = await ctx.coordinator.submitPurchase(first.id, 'anna', osloInput());
     expect(refill.state).toBe('CLAIM_SUBMITTED');
 
-    const second = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill: second } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
     await ctx.coordinator.acceptOffer(second.id, 'bjorn');
     ctx.clock.advance(25 * HOUR_MS);
     await ctx.coordinator.tick();
@@ -429,7 +432,7 @@ describe('submitPurchase', () => {
 
   it('rejects a purchase in the wrong currency for the office and keeps the claim', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
     await ctx.coordinator.acceptOffer(refill.id, 'anna');
 
     await expect(
@@ -447,7 +450,7 @@ describe('submitPurchase', () => {
     ['mismatched line totals', osloInput({ items: [{ name: 'Chips', quantity: 5, lineTotalMinor: 1 }] })],
   ])('rejects %s with ValidationError', async (_case, input) => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
     await ctx.coordinator.acceptOffer(refill.id, 'anna');
 
     await expect(ctx.coordinator.submitPurchase(refill.id, 'anna', input)).rejects.toThrow(ValidationError);

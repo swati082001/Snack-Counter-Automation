@@ -134,12 +134,12 @@ describe('HR claim lifecycle', () => {
     }
 
     ctx.clock.advance(10 * DAY_MS);
-    const atTenDays = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill: atTenDays } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
     expect(atTenDays.currentOffer?.volunteerId).toBe('anna');
     await ctx.coordinator.cancelRefill(atTenDays.id, 'dina', 'test reset');
 
     ctx.clock.advance(HOUR_MS);
-    const afterTenDays = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    const { refill: afterTenDays } = await ctx.coordinator.reportEmpty('OSLO', 'dina');
     expect(afterTenDays.currentOffer?.volunteerId).toBe('bjorn');
   });
 });

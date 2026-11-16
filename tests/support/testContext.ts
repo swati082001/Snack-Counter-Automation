@@ -87,7 +87,7 @@ export async function reportAcceptAndBuy(
   office: Office,
   input: PurchaseInput,
 ): Promise<{ refill: Refill; purchase: Purchase }> {
-  const reported = await ctx.coordinator.reportEmpty(office, 'dina');
+  const { refill: reported } = await ctx.coordinator.reportEmpty(office, 'dina');
   const buyer = reported.currentOffer?.volunteerId;
   if (!buyer) throw new Error(`test setup: nobody was offered refill ${reported.id}`);
   await ctx.coordinator.acceptOffer(reported.id, buyer);

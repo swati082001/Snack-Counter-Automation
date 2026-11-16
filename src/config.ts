@@ -25,11 +25,11 @@ const HOUR_MS = 60 * 60 * 1000;
 export const DEFAULT_CONFIG: AppConfig = {
   offerWindowMs: 2 * HOUR_MS, // time to accept an offer
   purchaseDeadlineMs: 24 * HOUR_MS, // time to buy after accepting
-  fairnessWindowDays: 90, 
+  fairnessWindowDays: 90,
   unpaidClaimSkipDays: 10, // HR takes up to 10 days
   hrReminderAfterDays: 10, // notify management if a claim is still pending
   hrMaxSubmitAttempts: 3,
-  reportingCurrency: 'NOK', //  Oslo is the reporting base
+  reportingCurrency: 'NOK', // Oslo is the reporting base
   // Placeholder for tests and demos, not a market rate.
   fxRates: { INR_TO_NOK: 0.13 },
   offices: {

@@ -2,7 +2,7 @@ export type Office = 'OSLO' | 'BENGALURU';
 export type Currency = 'NOK' | 'INR';
 
 export interface Money {
-  amountMinor: number; // integer minor units: øre for NOK, paise for INR 
+  amountMinor: number; // integer minor units: øre for NOK, paise for INR
   currency: Currency;
 }
 
@@ -13,7 +13,7 @@ export interface Volunteer {
   name: string;
   homeOffice: Office;
   payrollCurrency: Currency;
-  currentOffice: Office; // differs from homeOffice while visiting 
+  currentOffice: Office; // differs from homeOffice while visiting
   availability: Availability;
   optedIn: boolean;
 }
@@ -75,7 +75,7 @@ export interface Purchase {
   items: SnackItem[];
   receiptRef: string; // opaque reference to the receipt image
   purchasedAt: Date;
-  overBudget: boolean; // flagged, never blocked 
+  overBudget: boolean; // flagged, never blocked
   unusualAmount: boolean; // outside the office's typical range, flag only
   hrClaimId: string | null;
   hrStatus: HrStatus;
@@ -83,7 +83,7 @@ export interface Purchase {
   hrReminderSentAt: Date | null;
 }
 
-// What the buyer submits with the receipt 
+// What the buyer submits with the receipt
 export interface PurchaseInput {
   amountMinor: number;
   currency: Currency;

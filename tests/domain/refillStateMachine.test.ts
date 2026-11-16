@@ -15,7 +15,7 @@ const ALL_STATES: RefillState[] = [
   'CANCELLED',
 ];
 
-// Every transition listed in TRD 8.1, written out independently of the source table.
+// Every allowed transition, written out independently of the source table.
 const LISTED: Array<[RefillState, RefillState]> = [
   ['REPORTED_EMPTY', 'OPEN'],
   ['OPEN', 'OPEN'],
@@ -49,7 +49,7 @@ describe('refill state machine', () => {
     expect(() => assertTransition(from, to)).toThrow(InvalidTransitionError);
   });
 
-  it('rejects the examples named in the TRD with code INVALID_TRANSITION', () => {
+  it('rejects moving a finished or purchased refill backwards with code INVALID_TRANSITION', () => {
     for (const [from, to] of [
       ['REIMBURSED', 'OPEN'],
       ['PURCHASED', 'CLAIMED'],

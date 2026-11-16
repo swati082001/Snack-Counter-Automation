@@ -11,6 +11,7 @@ export interface OfficeConfig {
 export interface AppConfig {
   offerWindowMs: number;
   purchaseDeadlineMs: number;
+  clearExclusionsAfterMs: number;
   fairnessWindowDays: number;
   unpaidClaimSkipDays: number;
   hrReminderAfterDays: number;
@@ -26,6 +27,9 @@ export const DAY_MS = 24 * HOUR_MS;
 export const DEFAULT_CONFIG: AppConfig = {
   offerWindowMs: 2 * HOUR_MS, // time to accept an offer
   purchaseDeadlineMs: 24 * HOUR_MS, // time to buy after accepting
+  // If everyone has declined or timed out, start asking them again once the
+  // refill is this old, so a refill is never stuck forever.
+  clearExclusionsAfterMs: 24 * HOUR_MS,
   fairnessWindowDays: 90,
   unpaidClaimSkipDays: 10, // HR takes up to 10 days
   hrReminderAfterDays: 10, // notify management if a claim is still pending

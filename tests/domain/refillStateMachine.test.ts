@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertTransition, canTransition, isTerminal } from '../../src/domain/refillStateMachine';
+import { assertTransition, canTransition, isBoxEmpty, isTerminal } from '../../src/domain/refillStateMachine';
 import { RefillState } from '../../src/domain/types';
 import { InvalidTransitionError } from '../../src/errors';
 
@@ -63,5 +63,10 @@ describe('refill state machine', () => {
   it('treats only REIMBURSED, REJECTED and CANCELLED as terminal', () => {
     const terminal = ALL_STATES.filter(isTerminal);
     expect(terminal).toEqual(['REIMBURSED', 'REJECTED', 'CANCELLED']);
+  });
+
+  it('treats only REPORTED_EMPTY, OPEN and CLAIMED as box-empty states', () => {
+    const boxEmpty = ALL_STATES.filter(isBoxEmpty);
+    expect(boxEmpty).toEqual(['REPORTED_EMPTY', 'OPEN', 'CLAIMED']);
   });
 });

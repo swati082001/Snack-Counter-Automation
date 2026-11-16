@@ -17,6 +17,10 @@ const ALLOWED_TRANSITIONS: Record<RefillState, readonly RefillState[]> = {
 
 const TERMINAL_STATES: readonly RefillState[] = ['REIMBURSED', 'REJECTED', 'CANCELLED'];
 
+// In these states the box is still empty. Once a refill is PURCHASED the box
+// is full again, even though the HR claim may take days to settle.
+const BOX_EMPTY_STATES: readonly RefillState[] = ['REPORTED_EMPTY', 'OPEN', 'CLAIMED'];
+
 export function canTransition(from: RefillState, to: RefillState): boolean {
   return ALLOWED_TRANSITIONS[from].includes(to);
 }
@@ -27,8 +31,13 @@ export function assertTransition(from: RefillState, to: RefillState): void {
   }
 }
 
-// A terminal refill is finished; any other state blocks a new refill for the
-// same office
+// A terminal refill is finished: nothing more will happen to it.
 export function isTerminal(state: RefillState): boolean {
   return TERMINAL_STATES.includes(state);
+}
+
+// Only one box-empty refill may exist per office: a second "box is empty"
+// report joins it instead of creating another (see DECISIONS.md).
+export function isBoxEmpty(state: RefillState): boolean {
+  return BOX_EMPTY_STATES.includes(state);
 }

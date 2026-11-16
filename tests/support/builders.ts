@@ -49,6 +49,7 @@ export function buildPurchase(overrides: Partial<Purchase> = {}): Purchase {
     hrClaimId: null,
     hrStatus: 'NOT_SUBMITTED',
     hrSubmittedAt: null,
+    hrSubmitAttempts: 0,
     hrReminderSentAt: null,
     ...overrides,
   };

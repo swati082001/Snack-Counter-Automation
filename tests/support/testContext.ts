@@ -1,7 +1,7 @@
 import { FakeChat } from '../../src/adapters/fakeChat';
 import { FakeHr } from '../../src/adapters/fakeHr';
 import { AppConfig, DEFAULT_CONFIG } from '../../src/config';
-import { Volunteer } from '../../src/domain/types';
+import { Office, Purchase, PurchaseInput, Refill, Volunteer } from '../../src/domain/types';
 import { SequentialIdGenerator } from '../../src/ids';
 import { InMemoryPurchaseRepository } from '../../src/refill/purchaseRepository';
 import { RefillCoordinator } from '../../src/refill/refillCoordinator';
@@ -65,4 +65,31 @@ export async function buildTestContext(roster: Volunteer[] = DEFAULT_ROSTER): Pr
 
   const coordinator = new RefillCoordinator({ refills, volunteers, purchases, chat, hr, clock, ids, config });
   return { clock, ids, config, refills, volunteers, purchases, chat, hr, coordinator };
+}
+
+export function osloInput(overrides: Partial<PurchaseInput> = {}): PurchaseInput {
+  return {
+    amountMinor: 50_000, // 500 NOK
+    currency: 'NOK',
+    items: [{ name: 'Chips', quantity: 5 }],
+    receiptRef: 'receipt_1',
+    ...overrides,
+  };
+}
+
+export function bengaluruInput(overrides: Partial<PurchaseInput> = {}): PurchaseInput {
+  return osloInput({ amountMinor: 200_000, currency: 'INR', ...overrides }); // 2,000 INR
+}
+
+// Report, accept by whoever is offered, and buy: the normal path up to the receipt.
+export async function reportAcceptAndBuy(
+  ctx: TestContext,
+  office: Office,
+  input: PurchaseInput,
+): Promise<{ refill: Refill; purchase: Purchase }> {
+  const reported = await ctx.coordinator.reportEmpty(office, 'dina');
+  const buyer = reported.currentOffer?.volunteerId;
+  if (!buyer) throw new Error(`test setup: nobody was offered refill ${reported.id}`);
+  await ctx.coordinator.acceptOffer(reported.id, buyer);
+  return ctx.coordinator.submitPurchase(reported.id, buyer, input);
 }

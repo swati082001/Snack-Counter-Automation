@@ -80,6 +80,7 @@ export interface Purchase {
   hrClaimId: string | null;
   hrStatus: HrStatus;
   hrSubmittedAt: Date | null;
+  hrSubmitAttempts: number; // calls made to HR so far; lets us alert management only on the first failure
   hrReminderSentAt: Date | null;
 }
 

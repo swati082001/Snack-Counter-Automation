@@ -1,4 +1,5 @@
-import { Money, Offer, Refill } from '../domain/types';
+import { Money, Offer, Purchase, Refill } from '../domain/types';
+import { BudgetStatus } from '../money/budgetTracker';
 import { formatMoney } from '../money/money';
 
 // Chat message texts in one place, so wording changes never touch the
@@ -31,7 +32,10 @@ export function claimConfirmedMessage(refill: Refill, deadline: Date, timeZone: 
 }
 
 export function claimExpiredMessage(refill: Refill): string {
-  return `Your claim on refill ${refill.id} (${refill.office}) passed its deadline and has been handed to someone else.`;
+  return (
+    `Your claim on refill ${refill.id} (${refill.office}) passed its deadline ` +
+    `and has been handed to someone else.`
+  );
 }
 
 export function noCandidateOfficeMessage(refill: Refill): string {
@@ -47,4 +51,47 @@ export function noCandidateManagementMessage(refill: Refill): string {
 
 export function cancelledMessage(refill: Refill, reason: string): string {
   return `Refill ${refill.id} (${refill.office}) was cancelled: ${reason}. No need to buy anything.`;
+}
+
+export function overBudgetMessage(purchase: Purchase, status: BudgetStatus): string {
+  return (
+    `Over budget: ${purchase.office} purchase ${purchase.id} of ${formatMoney(purchase.amount)} ` +
+    `brings ${status.month} spend to ${formatMoney(status.spent)} of ${formatMoney(status.budget)}. ` +
+    `The purchase was accepted.`
+  );
+}
+
+export function hrSubmitFailedMessage(purchase: Purchase): string {
+  return (
+    `Could not send the HR claim for purchase ${purchase.id} (${purchase.office}, ${formatMoney(purchase.amount)}) ` +
+    `by ${purchase.buyerId}. HR is unavailable; it will be retried automatically.`
+  );
+}
+
+export function reimbursedMessage(purchase: Purchase): string {
+  return (
+    `HR approved your claim for ${formatMoney(purchase.amount)} (refill ${purchase.refillId}). ` +
+    `Thanks for restocking!`
+  );
+}
+
+export function rejectedBuyerMessage(purchase: Purchase): string {
+  return (
+    `HR rejected your claim for ${formatMoney(purchase.amount)} (refill ${purchase.refillId}). ` +
+    `Management has been told and will follow up with you.`
+  );
+}
+
+export function rejectedManagementMessage(purchase: Purchase): string {
+  return (
+    `HR rejected claim ${purchase.hrClaimId} by ${purchase.buyerId} for ${formatMoney(purchase.amount)} ` +
+    `(${purchase.office}, refill ${purchase.refillId}). Please follow up with HR.`
+  );
+}
+
+export function hrReminderMessage(purchase: Purchase, days: number): string {
+  return (
+    `HR claim ${purchase.hrClaimId} by ${purchase.buyerId} for ${formatMoney(purchase.amount)} ` +
+    `(${purchase.office}) has been pending for more than ${days} days.`
+  );
 }

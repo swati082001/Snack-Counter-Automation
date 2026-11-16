@@ -2,21 +2,24 @@ import { ChatPort } from '../adapters/chatPort';
 import { HrPort } from '../adapters/hrPort';
 import { Clock } from '../clock';
 import { AppConfig } from '../config';
-import { assertTransition, isBoxEmpty, isTerminal } from '../domain/refillStateMachine';
-import { Office, Refill, RefillState } from '../domain/types';
+import { isBoxEmpty, isTerminal } from '../domain/refillStateMachine';
+import { Office, Purchase, PurchaseInput, Refill } from '../domain/types';
 import {
   AlreadyClaimedError,
   InvalidStateError,
   NotFoundError,
   NotOfferedToYouError,
+  NotYourClaimError,
   ValidationError,
   VersionConflictError,
 } from '../errors';
 import { IdGenerator } from '../ids';
-import { budgetStatus } from '../money/budgetTracker';
+import { assessPurchase, budgetStatus } from '../money/budgetTracker';
+import { createMoney } from '../money/money';
 import { monthKey } from '../money/monthKey';
 import { pickNext } from '../volunteers/assignmentEngine';
 import { VolunteerRepository } from '../volunteers/volunteerRepository';
+import { HrClaimFollowUp } from './hrClaimFollowUp';
 import {
   cancelledMessage,
   claimConfirmedMessage,
@@ -24,8 +27,19 @@ import {
   noCandidateManagementMessage,
   noCandidateOfficeMessage,
   offerMessage,
+  overBudgetMessage,
 } from './messages';
 import { PurchaseRepository } from './purchaseRepository';
+import { validatePurchaseInput } from './purchaseValidation';
+import {
+  Notification,
+  SYSTEM,
+  exclude,
+  moveTo,
+  saveRefill,
+  sendNotifications,
+  skipIfChangedMeanwhile,
+} from './refillChanges';
 import { RefillRepository } from './refillRepository';
 
 export interface RefillCoordinatorDeps {
@@ -39,20 +53,16 @@ export interface RefillCoordinatorDeps {
   config: AppConfig;
 }
 
-// Messages are collected while a refill is changed and sent only after the
-// save succeeds, so nobody is told about a change that was then refused.
-type Notification =
-  | { kind: 'direct'; to: string; text: string }
-  | { kind: 'office'; office: Office; text: string }
-  | { kind: 'management'; text: string };
-
-const SYSTEM = 'system';
-
 // Runs the refill lifecycle: report, offer, accept or decline, deadlines,
-// hand-over and cancel. Every change goes through the state machine and is
-// saved with the version it was read at, so two people can never both win.
+// hand-over, cancel and purchase. What happens with the HR claim after the
+// purchase lives in HrClaimFollowUp. Every change is saved with the version
+// it was read at, so two people can never both win.
 export class RefillCoordinator {
-  constructor(private readonly deps: RefillCoordinatorDeps) {}
+  private readonly hrFollowUp: HrClaimFollowUp;
+
+  constructor(private readonly deps: RefillCoordinatorDeps) {
+    this.hrFollowUp = new HrClaimFollowUp(deps);
+  }
 
   async reportEmpty(office: Office, reportedBy: string): Promise<Refill> {
     const existing = await this.deps.refills.findActiveByOffice(office);
@@ -182,13 +192,90 @@ export class RefillCoordinator {
     return saved;
   }
 
+  async submitPurchase(
+    refillId: string,
+    volunteerId: string,
+    input: PurchaseInput,
+  ): Promise<{ refill: Refill; purchase: Purchase }> {
+    const refill = await this.getRefill(refillId);
+    const now = this.now();
+
+    // A receipt that arrives after the claim deadline is still accepted while
+    // the claim has not been handed on: the buyer has already spent the money.
+    if (refill.state !== 'CLAIMED') {
+      throw new InvalidStateError(`Refill ${refillId} is ${refill.state}; only a claimed refill can be purchased`);
+    }
+    if (refill.claimedBy !== volunteerId) {
+      throw new NotYourClaimError(`Refill ${refillId} is not claimed by ${volunteerId}`);
+    }
+    const officeConfig = this.deps.config.offices[refill.office];
+    validatePurchaseInput(input, officeConfig.currency);
+
+    const officePurchases = await this.deps.purchases.list({ office: refill.office });
+    const amount = createMoney(input.amountMinor, input.currency);
+    const flags = assessPurchase(refill.office, amount, now, officePurchases, this.deps.config);
+    const purchase: Purchase = {
+      id: this.deps.ids.next('purchase'),
+      refillId,
+      buyerId: volunteerId,
+      office: refill.office,
+      amount,
+      items: structuredClone(input.items),
+      receiptRef: input.receiptRef,
+      purchasedAt: now,
+      overBudget: flags.overBudget,
+      unusualAmount: flags.unusualAmount,
+      hrClaimId: null,
+      hrStatus: 'NOT_SUBMITTED',
+      hrSubmittedAt: null,
+      hrSubmitAttempts: 0,
+      hrReminderSentAt: null,
+    };
+
+    refill.purchaseId = purchase.id;
+    refill.claimDeadline = null;
+    moveTo(refill, 'PURCHASED', 'PURCHASED', volunteerId, now);
+
+    // Refill first: if someone changed it meanwhile (cancelled, or a tick
+    // handed the claim on), the save is refused and nothing is stored.
+    let purchasedRefill: Refill;
+    try {
+      purchasedRefill = await this.save(refill);
+    } catch (error) {
+      if (error instanceof VersionConflictError) {
+        throw new InvalidStateError(`Refill ${refillId} changed while the purchase was being submitted`);
+      }
+      throw error;
+    }
+    await this.deps.purchases.add(purchase);
+
+    // The budget is a soft limit: the purchase stands, management is told.
+    if (flags.overBudget) {
+      const month = monthKey(now, officeConfig.timeZone);
+      const status = budgetStatus(refill.office, month, [...officePurchases, purchase], this.deps.config);
+      await this.send([{ kind: 'management', text: overBudgetMessage(purchase, status) }]);
+    }
+
+    // If HR is down the purchase is already safe; the claim is retried later.
+    return this.hrFollowUp.submit(purchasedRefill, purchase, now);
+  }
+
   // Safe to call any number of times: it only acts on deadlines that have
-  // passed and refills still waiting for someone.
+  // passed, refills still waiting for someone, and HR work still to do.
   async tick(): Promise<void> {
     const now = this.now();
     await this.handOnExpiredOffers(now);
     await this.reopenOverdueClaims(now);
     await this.retryRefillsWithoutOffer(now);
+    await this.hrFollowUp.retryPendingSubmissions(now);
+    await this.hrFollowUp.sendReminders(now);
+  }
+
+  async syncHrClaims(): Promise<void> {
+    const now = this.now();
+    await this.hrFollowUp.retryPendingSubmissions(now);
+    await this.hrFollowUp.applyHrDecisions(now);
+    await this.hrFollowUp.sendReminders(now);
   }
 
   async getRefill(id: string): Promise<Refill> {
@@ -318,55 +405,15 @@ export class RefillCoordinator {
     return refill.excludedVolunteerIds.length > 0 && openForMs > this.deps.config.clearExclusionsAfterMs;
   }
 
-  // Saves with the version that was read; the repository refuses the save if
-  // anyone else saved first. Returns the refill with its new version.
   private async save(refill: Refill): Promise<Refill> {
-    await this.deps.refills.save(refill, refill.version);
-    return { ...refill, version: refill.version + 1 };
+    return saveRefill(this.deps.refills, refill);
   }
 
   private async send(notifications: readonly Notification[]): Promise<void> {
-    for (const notification of notifications) {
-      switch (notification.kind) {
-        case 'direct':
-          await this.deps.chat.sendDirect(notification.to, notification.text);
-          break;
-        case 'office':
-          await this.deps.chat.postToOffice(notification.office, notification.text);
-          break;
-        case 'management':
-          await this.deps.chat.notifyManagement(notification.text);
-          break;
-      }
-    }
+    await sendNotifications(this.deps.chat, notifications);
   }
 
   private now(): Date {
     return this.deps.clock.now();
-  }
-}
-
-function moveTo(refill: Refill, to: RefillState, event: string, actor: string, at: Date): void {
-  assertTransition(refill.state, to);
-  refill.history.push({ at, from: refill.state, to, event, actor });
-  refill.state = to;
-}
-
-function exclude(refill: Refill, volunteerId: string): void {
-  if (!refill.excludedVolunteerIds.includes(volunteerId)) {
-    refill.excludedVolunteerIds.push(volunteerId);
-  }
-}
-
-// During tick, someone may change a refill at the same moment (for example
-// accept an offer). That save wins; this tick skips the refill and the next
-// tick looks at it again with fresh data.
-async function skipIfChangedMeanwhile(work: () => Promise<void>): Promise<void> {
-  try {
-    await work();
-  } catch (error) {
-    if (!(error instanceof VersionConflictError)) {
-      throw error;
-    }
   }
 }

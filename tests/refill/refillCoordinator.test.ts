@@ -1,26 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import { HOUR_MS } from '../../src/config';
-import { Refill, RefillState } from '../../src/domain/types';
+import { Refill } from '../../src/domain/types';
 import {
   AlreadyClaimedError,
+  CurrencyMismatchError,
   InvalidStateError,
   NotFoundError,
   NotOfferedToYouError,
+  NotYourClaimError,
   ValidationError,
 } from '../../src/errors';
-import { TestContext, buildTestContext } from '../support/testContext';
+import { budgetStatus } from '../../src/money/budgetTracker';
+import { buildVolunteer } from '../support/builders';
+import {
+  TestContext,
+  bengaluruInput,
+  buildTestContext,
+  osloInput,
+  reportAcceptAndBuy,
+} from '../support/testContext';
 
 const MINUTE_MS = 60 * 1000;
 
 const events = (refill: Refill) => refill.history.map((entry) => entry.event);
 const states = (refill: Refill) => refill.history.map((entry) => entry.to);
-
-// Moves a refill straight to a later state, for tests about what may happen
-// after a purchase (purchases themselves come with the HR gateway).
-async function forceState(ctx: TestContext, refillId: string, state: RefillState): Promise<void> {
-  const refill = await ctx.coordinator.getRefill(refillId);
-  await ctx.refills.save({ ...refill, state, currentOffer: null }, refill.version);
-}
 
 async function setAvailability(ctx: TestContext, employeeId: string, availability: 'OFFICE' | 'REMOTE' | 'AWAY') {
   const volunteer = await ctx.volunteers.get(employeeId);
@@ -92,8 +95,8 @@ describe('reportEmpty', () => {
 
   it('creates a new refill once the previous one is purchased, though its HR claim is still open', async () => {
     const ctx = await buildTestContext();
-    const first = await ctx.coordinator.reportEmpty('OSLO', 'dina');
-    await forceState(ctx, first.id, 'PURCHASED');
+    const { refill: first } = await reportAcceptAndBuy(ctx, 'OSLO', osloInput());
+    expect(first.state).toBe('CLAIM_SUBMITTED');
 
     const second = await ctx.coordinator.reportEmpty('OSLO', 'dina');
 
@@ -273,7 +276,7 @@ describe('tick: deadlines and hand-over', () => {
 });
 
 describe('when nobody is eligible', () => {
-  it('stays open without an offer, tells office and management once, and offers later when someone is available', async () => {
+  it('stays open without an offer, tells office and management once, offers later when someone is free', async () => {
     const ctx = await buildTestContext();
     for (const id of ['anna', 'bjorn', 'carl']) {
       await setAvailability(ctx, id, 'AWAY');
@@ -356,8 +359,9 @@ describe('cancelRefill', () => {
 
   it('refuses to cancel a purchased refill', async () => {
     const ctx = await buildTestContext();
-    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
-    await forceState(ctx, refill.id, 'PURCHASED');
+    ctx.hr.failNext(3); // HR down, so the refill stays PURCHASED
+    const { refill } = await reportAcceptAndBuy(ctx, 'OSLO', osloInput());
+    expect(refill.state).toBe('PURCHASED');
 
     await expect(ctx.coordinator.cancelRefill(refill.id, 'carl', 'Changed my mind')).rejects.toThrow(
       InvalidStateError,
@@ -369,5 +373,144 @@ describe('cancelRefill', () => {
     const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
 
     await expect(ctx.coordinator.cancelRefill(refill.id, 'carl', '   ')).rejects.toThrow(ValidationError);
+  });
+});
+
+describe('submitPurchase', () => {
+  it('records the purchase, moves the refill to PURCHASED then CLAIM_SUBMITTED, and sends the HR claim', async () => {
+    const ctx = await buildTestContext();
+
+    const { refill, purchase } = await reportAcceptAndBuy(ctx, 'OSLO', osloInput());
+
+    expect(refill).toMatchObject({ state: 'CLAIM_SUBMITTED', purchaseId: purchase.id, claimDeadline: null });
+    expect(events(refill).slice(-2)).toEqual(['PURCHASED', 'HR_CLAIM_SUBMITTED']);
+    expect(purchase).toMatchObject({
+      id: 'purchase_1',
+      buyerId: 'anna',
+      office: 'OSLO',
+      amount: { amountMinor: 50_000, currency: 'NOK' },
+      purchasedAt: ctx.clock.now(),
+      overBudget: false,
+      unusualAmount: false,
+      hrClaimId: 'claim_1',
+      hrStatus: 'PENDING',
+      hrSubmittedAt: ctx.clock.now(),
+      hrSubmitAttempts: 1,
+    });
+    expect(await ctx.purchases.get(purchase.id)).toEqual(purchase);
+    expect(ctx.hr.claimCount).toBe(1);
+  });
+
+  it('only accepts a purchase from the claimer of a claimed refill', async () => {
+    const ctx = await buildTestContext();
+    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+
+    await expect(ctx.coordinator.submitPurchase(refill.id, 'anna', osloInput())).rejects.toThrow(InvalidStateError);
+
+    await ctx.coordinator.acceptOffer(refill.id, 'anna');
+    await expect(ctx.coordinator.submitPurchase(refill.id, 'bjorn', osloInput())).rejects.toThrow(NotYourClaimError);
+  });
+
+  it('accepts a late receipt while the claim has not been handed on, and refuses it after', async () => {
+    const ctx = await buildTestContext();
+    const first = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    await ctx.coordinator.acceptOffer(first.id, 'anna');
+    ctx.clock.advance(25 * HOUR_MS);
+
+    const { refill } = await ctx.coordinator.submitPurchase(first.id, 'anna', osloInput());
+    expect(refill.state).toBe('CLAIM_SUBMITTED');
+
+    const second = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    await ctx.coordinator.acceptOffer(second.id, 'bjorn');
+    ctx.clock.advance(25 * HOUR_MS);
+    await ctx.coordinator.tick();
+    await expect(ctx.coordinator.submitPurchase(second.id, 'bjorn', osloInput())).rejects.toThrow(InvalidStateError);
+  });
+
+  it('rejects a purchase in the wrong currency for the office and keeps the claim', async () => {
+    const ctx = await buildTestContext();
+    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    await ctx.coordinator.acceptOffer(refill.id, 'anna');
+
+    await expect(
+      ctx.coordinator.submitPurchase(refill.id, 'anna', osloInput({ currency: 'INR' })),
+    ).rejects.toThrow(CurrencyMismatchError);
+
+    expect((await ctx.coordinator.getRefill(refill.id)).state).toBe('CLAIMED');
+    expect(await ctx.purchases.list()).toEqual([]);
+  });
+
+  it.each([
+    ['non-positive amount', osloInput({ amountMinor: 0 })],
+    ['empty items', osloInput({ items: [] })],
+    ['bad quantity', osloInput({ items: [{ name: 'Chips', quantity: -1 }] })],
+    ['mismatched line totals', osloInput({ items: [{ name: 'Chips', quantity: 5, lineTotalMinor: 1 }] })],
+  ])('rejects %s with ValidationError', async (_case, input) => {
+    const ctx = await buildTestContext();
+    const refill = await ctx.coordinator.reportEmpty('OSLO', 'dina');
+    await ctx.coordinator.acceptOffer(refill.id, 'anna');
+
+    await expect(ctx.coordinator.submitPurchase(refill.id, 'anna', input)).rejects.toThrow(ValidationError);
+  });
+
+  it('records a visiting INR-payroll buyer in Oslo in NOK; the HR claim carries NOK and their own id', async () => {
+    const visitor = buildVolunteer({
+      employeeId: 'priya',
+      homeOffice: 'BENGALURU',
+      payrollCurrency: 'INR',
+      currentOffice: 'OSLO',
+    });
+    const ctx = await buildTestContext([visitor]);
+
+    const { purchase } = await reportAcceptAndBuy(ctx, 'OSLO', osloInput({ amountMinor: 80_000 }));
+
+    expect(purchase.buyerId).toBe('priya');
+    expect(purchase.amount).toEqual({ amountMinor: 80_000, currency: 'NOK' });
+    expect(ctx.hr.requestFor('claim_1')).toMatchObject({
+      employeeId: 'priya',
+      amount: { amountMinor: 80_000, currency: 'NOK' },
+    });
+  });
+});
+
+describe('budget flags', () => {
+  it('keeps Oslo and Bengaluru budgets independent through real purchases', async () => {
+    const ctx = await buildTestContext();
+    await reportAcceptAndBuy(ctx, 'OSLO', osloInput({ amountMinor: 120_000 }));
+    await reportAcceptAndBuy(ctx, 'BENGALURU', bengaluruInput({ amountMinor: 300_000 }));
+
+    const all = await ctx.purchases.list();
+    const oslo = budgetStatus('OSLO', '2026-11', all, ctx.config);
+    const bengaluru = budgetStatus('BENGALURU', '2026-11', all, ctx.config);
+
+    expect(oslo.remaining).toEqual({ amountMinor: 480_000, currency: 'NOK' });
+    expect(bengaluru.remaining).toEqual({ amountMinor: 1_200_000, currency: 'INR' });
+  });
+
+  it('accepts an over-budget purchase, flags it, and tells management', async () => {
+    const ctx = await buildTestContext();
+    // 5 x 1,200 NOK = the full 6,000 NOK budget; the sixth purchase goes over.
+    for (let i = 0; i < 5; i += 1) {
+      const { purchase } = await reportAcceptAndBuy(ctx, 'OSLO', osloInput({ amountMinor: 120_000 }));
+      expect(purchase.overBudget).toBe(false);
+    }
+    expect(ctx.chat.managementMessages()).toHaveLength(0);
+
+    const { refill, purchase } = await reportAcceptAndBuy(ctx, 'OSLO', osloInput({ amountMinor: 30_000 }));
+
+    expect(purchase.overBudget).toBe(true);
+    expect(refill.state).toBe('CLAIM_SUBMITTED');
+    expect(ctx.chat.managementMessages()).toHaveLength(1);
+    expect(ctx.chat.managementMessages()[0].text).toContain('6,300.00 NOK of 6,000.00 NOK');
+  });
+
+  it('flags an amount outside the typical range without blocking it', async () => {
+    const ctx = await buildTestContext();
+
+    const { refill, purchase } = await reportAcceptAndBuy(ctx, 'OSLO', osloInput({ amountMinor: 150_000 }));
+
+    expect(purchase.unusualAmount).toBe(true);
+    expect(purchase.overBudget).toBe(false);
+    expect(refill.state).toBe('CLAIM_SUBMITTED');
   });
 });

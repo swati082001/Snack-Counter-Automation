@@ -4,6 +4,7 @@ dist
 # Claude Code skills and local settings
 .claude/
 
-# Markdown files are private notes, except the root README
+# Markdown files are private notes, except the root README and DECISIONS
 *.md
 !/README.md
+!/DECISIONS.md

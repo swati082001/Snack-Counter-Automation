@@ -4,7 +4,7 @@ import { addMoney, compareMoney, createMoney, subtractMoney, sumMoney } from './
 import { monthKey } from './monthKey';
 
 // Pure functions over a list of purchases: the caller loads purchases from the
-// repository and passes them in, so this file needs no storage (see DECISIONS.md).
+// repository and passes them in, so this file needs no storage.
 
 export interface BudgetStatus {
   office: Office;

@@ -3,7 +3,7 @@ import { Purchase, Refill, Volunteer } from '../domain/types';
 
 // Picks who is asked to buy next. Pure: same input, same answer, no I/O.
 // The caller passes plain lists and every rule is applied here, so the whole
-// "who gets asked" policy can be read in this one file (see DECISIONS.md).
+// "who gets asked" policy can be read in this one file.
 
 export interface PickNextInput {
   refill: Refill;

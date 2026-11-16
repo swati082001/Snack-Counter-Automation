@@ -37,7 +37,8 @@ export function isTerminal(state: RefillState): boolean {
 }
 
 // Only one box-empty refill may exist per office: a second "box is empty"
-// report joins it instead of creating another (see DECISIONS.md).
+// report joins it instead of creating another. A purchased refill waiting for
+// HR does not block a new report: the box is full again.
 export function isBoxEmpty(state: RefillState): boolean {
   return BOX_EMPTY_STATES.includes(state);
 }

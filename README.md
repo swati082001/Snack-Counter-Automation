@@ -30,6 +30,20 @@ Core logic for keeping the Oslo and Bengaluru snack boxes stocked: every empty b
 | A13 | Money is stored as integer minor units (øre, paise). | Avoids floating point errors. |
 | A14 | A rejected HR claim keeps its spend in the budget and report; buyer and management are told. | The money was spent; resolving it with HR is a human task. |
 
+## Design decisions
+
+The choices that shape the behaviour, and why.
+
+- **Only an empty box blocks a new report.** A second `/empty` joins the refill that is still REPORTED_EMPTY, OPEN or CLAIMED. A refill that is already PURCHASED does not block a new one, even while its HR claim waits up to 10 days, because the box is full again by then.
+- **Two people can never hold the same refill.** Only the person named in the offer can accept, and every save carries the version it read: if someone else saved first, the save is refused (`409 ALREADY_CLAIMED`). A test runs two simultaneous accepts that both pass the checks, and it fails if the version check is removed.
+- **Nothing is left half-done.** On purchase, the refill is saved as PURCHASED first and the purchase stored only after that succeeds. If the claim was handed on or cancelled at that moment, nothing is stored. HR decisions follow the same order.
+- **A late receipt is still accepted** while the buyer still holds the claim (the background job has not handed it on yet), because they have already spent their own money. Once the claim has been handed on, it is refused and becomes a human task.
+- **HR is treated as unreliable and slow.** Each claim uses the refill id as its idempotency key, so a retry after a lost response can never create a second claim. Submission is retried up to 3 times, then again on every background run. Management hears about a failed submission once, not every minute. Decisions are fetched by polling, and a claim pending more than 10 days triggers one reminder.
+- **Nobody is stuck forever.** If everyone available has declined or let the offer expire, they are asked again once the refill is more than 24 hours old. Until then the office channel and management are told once.
+- **Money never drifts.** Amounts are integer minor units. NOK and INR are never added directly. Conversion to NOK happens once per office total (and once per snack in the snack breakdown), never per purchase, so rounding cannot add up.
+- **The rules live in pure functions.** Who is asked next, budget status and the monthly report take plain lists and return plain data: no storage, clock or network. Only the coordinator talks to repositories, chat and HR. This keeps the core deterministic and testable in milliseconds.
+- **"Pending HR" in the report includes claims not yet sent to HR**, because to management both mean a volunteer still waiting for their money.
+
 ## How to run
 
 Requirements: Node.js 20 or newer, pnpm.
